@@ -1,17 +1,17 @@
 import { useState, useEffect } from "react";
 import { T, FONT } from "../theme";
-import { uid, CATEGORIES, EMOJIS, fmt } from "../utils";
+import { uid, CATEGORIES, POSITIONS, ENGINE_TYPES, TRANSMISSIONS, EMOJIS, fmt } from "../utils";
 import { Modal, Field, Input, Select, Divider, Btn } from "./ui";
 
 export function ProductModal({ open, onClose, product, onSave, toast, activeShopId }) {
     const isEdit = !!product;
-    const blank = { name: "", sku: "", hsnCode: "", category: "Engine", brand: "", vehicles: "", buyPrice: "", sellPrice: "", mrp: "", stock: "", minStock: "10", maxStock: "1000", reorderQty: "20", location: "", supplier: "", image: "📦", gstRate: "18", trackBatch: false, batchNumber: "", expiryDate: "", notes: "" };
+    const blank = { name: "", sku: "", hsnCode: "", category: "Engine", brand: "", vehicles: "", buyPrice: "", sellPrice: "", mrp: "", stock: "", minStock: "10", maxStock: "1000", reorderQty: "20", location: "", supplier: "", image: "📦", gstRate: "18", trackBatch: false, batchNumber: "", expiryDate: "", notes: "", oemNumber: "", position: "", engineType: "", transmission: "" };
     const [f, setF] = useState(blank);
     const [errors, setErrors] = useState({});
     const [saving, setSaving] = useState(false);
 
     useEffect(() => {
-        setF(product ? { ...product, buyPrice: String(product.buyPrice), sellPrice: String(product.sellPrice), mrp: String(product.mrp || ""), stock: String(product.stock), minStock: String(product.minStock), maxStock: String(product.maxStock || 1000), reorderQty: String(product.reorderQty || 20), gstRate: String(product.gstRate || product.gst || 18), hsnCode: product.hsnCode || "", trackBatch: !!product.trackBatch, batchNumber: product.batchNumber || "", expiryDate: product.expiryDate || "", vehicles: product.vehicles || (product.compatibleVehicles || []).join(", ") } : blank);
+        setF(product ? { ...product, buyPrice: String(product.buyPrice), sellPrice: String(product.sellPrice), mrp: String(product.mrp || ""), stock: String(product.stock), minStock: String(product.minStock), maxStock: String(product.maxStock || 1000), reorderQty: String(product.reorderQty || 20), gstRate: String(product.gstRate || product.gst || 18), hsnCode: product.hsnCode || "", trackBatch: !!product.trackBatch, batchNumber: product.batchNumber || "", expiryDate: product.expiryDate || "", vehicles: product.vehicles || (product.compatibleVehicles || []).join(", "), oemNumber: product.oemNumber || "", position: product.position || "", engineType: product.engineType || "", transmission: product.transmission || "" } : blank);
         setErrors({});
     }, [product, open]);
 
@@ -34,7 +34,7 @@ export function ProductModal({ open, onClose, product, onSave, toast, activeShop
         if (!validate()) return;
         setSaving(true);
         await new Promise(r => setTimeout(r, 200));
-        onSave({ ...f, id: product?.id || "p" + uid(), shopId: product?.shopId || activeShopId, buyPrice: +f.buyPrice, sellPrice: +f.sellPrice, mrp: +f.mrp || null, stock: +f.stock, minStock: +f.minStock || 10, maxStock: +f.maxStock || 1000, reorderQty: +f.reorderQty || 20, gstRate: +f.gstRate || 18, hsnCode: f.hsnCode || "", trackBatch: !!f.trackBatch, batchNumber: f.batchNumber || "", expiryDate: f.expiryDate || "" });
+        onSave({ ...f, id: product?.id || "p" + uid(), shopId: product?.shopId || activeShopId, buyPrice: +f.buyPrice, sellPrice: +f.sellPrice, mrp: +f.mrp || null, stock: +f.stock, minStock: +f.minStock || 10, maxStock: +f.maxStock || 1000, reorderQty: +f.reorderQty || 20, gstRate: +f.gstRate || 18, hsnCode: f.hsnCode || "", trackBatch: !!f.trackBatch, batchNumber: f.batchNumber || "", expiryDate: f.expiryDate || "", oemNumber: f.oemNumber || "", position: f.position || "", engineType: f.engineType || "", transmission: f.transmission || "" });
         toast(isEdit ? "Product updated!" : "Product added to inventory!", "success", isEdit ? undefined : "New Product");
         setSaving(false);
         onClose();
@@ -60,6 +60,14 @@ export function ProductModal({ open, onClose, product, onSave, toast, activeShop
                 <Field label="Supplier"><Input value={f.supplier} onChange={set("supplier")} placeholder="Supplier name" /></Field>
                 <Field label="Storage Location" hint="Rack / shelf code"><Input value={f.location} onChange={set("location")} placeholder="Rack A-12" /></Field>
                 <div style={{ gridColumn: "span 2" }}><Field label="Vehicle Compatibility"><Input value={f.vehicles} onChange={set("vehicles")} placeholder="Car — Swift, i20 / Bike — Splendor, Activa" /></Field></div>
+
+                <Divider label="Automobile Specs" />
+                <div style={{ gridColumn: "span 2" }} />
+                <div style={{ gridColumn: "span 2" }}><Field label="OEM Part Number" hint="Original Equipment Manufacturer number"><Input value={f.oemNumber} onChange={set("oemNumber")} placeholder="e.g. 04465-02220" /></Field></div>
+                <Field label="Position"><Select value={f.position} onChange={set("position")} options={[{ value: "", label: "— None —" }, ...POSITIONS.map(v => ({ value: v, label: v }))]} /></Field>
+                <Field label="Engine Type"><Select value={f.engineType} onChange={set("engineType")} options={[{ value: "", label: "— None —" }, ...ENGINE_TYPES.map(v => ({ value: v, label: v }))]} /></Field>
+                <Field label="Transmission"><Select value={f.transmission} onChange={set("transmission")} options={[{ value: "", label: "— None —" }, ...TRANSMISSIONS.map(v => ({ value: v, label: v }))]} /></Field>
+
                 <div style={{ gridColumn: "span 2" }}><Field label="Notes / Description"><Input value={f.notes} onChange={set("notes")} placeholder="Any important notes" /></Field></div>
 
                 <Divider label="Pricing" />

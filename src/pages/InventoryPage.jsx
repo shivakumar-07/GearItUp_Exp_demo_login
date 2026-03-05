@@ -6,6 +6,7 @@ import { PurchaseModal } from "../components/PurchaseModal";
 import { SaleModal } from "../components/SaleModal";
 import { StockAdjustmentModal } from "../components/StockAdjustmentModal";
 import { printBarcodeLabels } from "../barcode";
+import { MANUFACTURERS, getModelsForMfg, getYearsForModel, buildVehicleMatchStr, isProductCompatible } from "../vehicleData";
 
 export function InventoryPage({ products, movements, activeShopId, onAdd, onEdit, onSale, onPurchase, onAdjust, toast }) {
     const [search, setSearch] = useState("");
@@ -15,22 +16,48 @@ export function InventoryPage({ products, movements, activeShopId, onAdd, onEdit
     const [saleP, setSaleP] = useState(null);
     const [purchP, setPurchP] = useState(null);
     const [adjP, setAdjP] = useState(null);
+    const [expandedId, setExpandedId] = useState(null);
+    // Vehicle selection state: Brand → Model → Year
+    const [selBrand, setSelBrand] = useState("");
+    const [selModel, setSelModel] = useState("");
+    const [selYear, setSelYear] = useState("");
+
+    const brandModels = useMemo(() => selBrand ? getModelsForMfg(selBrand) : [], [selBrand]);
+    const modelYears = useMemo(() => selModel ? getYearsForModel(selModel) : [], [selModel]);
+    const vehicleMatchStr = useMemo(() => buildVehicleMatchStr(selBrand, selModel), [selBrand, selModel]);
 
     const shopProducts = useMemo(() => products.filter(p => p.shopId === activeShopId), [products, activeShopId]);
 
-    const filtered = useMemo(() =>
-        shopProducts
+    const filtered = useMemo(() => {
+        let list = shopProducts
             .filter(p => cat === "All" || p.category === cat)
             .filter(p => statusF === "All" || stockStatus(p) === statusF)
-            .filter(p => !search || [p.name, p.sku, p.brand, p.supplier].some(s => (s || "").toLowerCase().includes(search.toLowerCase())))
-            .sort((a, b) => {
-                if (sortBy === "profit") return (b.sellPrice - b.buyPrice) - (a.sellPrice - a.buyPrice);
-                if (sortBy === "margin") return +margin(b.buyPrice, b.sellPrice) - +margin(a.buyPrice, a.sellPrice);
-                if (sortBy === "stock") return a.stock - b.stock;
-                if (sortBy === "value") return b.buyPrice * b.stock - a.buyPrice * a.stock;
-                if (sortBy === "sell") return b.sellPrice - a.sellPrice;
-                return a.name.localeCompare(b.name);
-            }), [shopProducts, cat, statusF, search, sortBy]);
+            .filter(p => !search || [p.name, p.sku, p.brand, p.supplier, p.oemNumber].some(s => (s || "").toLowerCase().includes(search.toLowerCase())));
+
+        // Vehicle compatibility filter
+        if (vehicleMatchStr) {
+            list = list.filter(p => {
+                const compat = isProductCompatible(p, vehicleMatchStr);
+                return compat === "compatible" || compat === "universal";
+            });
+        }
+
+        return list.sort((a, b) => {
+            // If vehicle selected, sort compatible first, then universal
+            if (vehicleMatchStr) {
+                const ca = isProductCompatible(a, vehicleMatchStr);
+                const cb = isProductCompatible(b, vehicleMatchStr);
+                if (ca === "compatible" && cb !== "compatible") return -1;
+                if (cb === "compatible" && ca !== "compatible") return 1;
+            }
+            if (sortBy === "profit") return (b.sellPrice - b.buyPrice) - (a.sellPrice - a.buyPrice);
+            if (sortBy === "margin") return +margin(b.buyPrice, b.sellPrice) - +margin(a.buyPrice, a.sellPrice);
+            if (sortBy === "stock") return a.stock - b.stock;
+            if (sortBy === "value") return b.buyPrice * b.stock - a.buyPrice * a.stock;
+            if (sortBy === "sell") return b.sellPrice - a.sellPrice;
+            return a.name.localeCompare(b.name);
+        });
+    }, [shopProducts, cat, statusF, search, sortBy, vehicleMatchStr]);
 
     const counts = {
         out: shopProducts.filter(p => p.stock <= 0).length,
@@ -68,6 +95,54 @@ export function InventoryPage({ products, movements, activeShopId, onAdd, onEdit
 
     return (
         <div className="page-in" style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+            {/* 🚗 Vehicle Selector Bar */}
+            <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: 14, padding: "14px 20px", display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+                <div style={{ fontSize: 13, fontWeight: 800, color: T.t1, display: "flex", alignItems: "center", gap: 6, whiteSpace: "nowrap" }}>
+                    <span style={{ fontSize: 18 }}>🚗</span> Find Parts for Vehicle
+                </div>
+
+                {/* Brand */}
+                <select value={selBrand} onChange={e => { setSelBrand(e.target.value); setSelModel(""); setSelYear(""); }}
+                    style={{ background: T.surface, border: `1px solid ${selBrand ? T.amber + "66" : T.border}`, borderRadius: 8, padding: "8px 12px", color: selBrand ? T.t1 : T.t3, fontSize: 12, fontWeight: 600, fontFamily: FONT.ui, cursor: "pointer", minWidth: 160, outline: "none" }}>
+                    <option value="">Select Brand</option>
+                    {MANUFACTURERS.map(m => <option key={m.id} value={m.id}>{m.logo} {m.name}</option>)}
+                </select>
+
+                {/* Model — only after Brand */}
+                {selBrand && (
+                    <select value={selModel} onChange={e => { setSelModel(e.target.value); setSelYear(""); }}
+                        style={{ background: T.surface, border: `1px solid ${selModel ? T.amber + "66" : T.border}`, borderRadius: 8, padding: "8px 12px", color: selModel ? T.t1 : T.t3, fontSize: 12, fontWeight: 600, fontFamily: FONT.ui, cursor: "pointer", minWidth: 160, outline: "none" }}>
+                        <option value="">Select Model</option>
+                        {brandModels.map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
+                    </select>
+                )}
+
+                {/* Year — only after Brand + Model */}
+                {selBrand && selModel && (
+                    <select value={selYear} onChange={e => setSelYear(e.target.value)}
+                        style={{ background: T.surface, border: `1px solid ${selYear ? T.amber + "66" : T.border}`, borderRadius: 8, padding: "8px 12px", color: selYear ? T.t1 : T.t3, fontSize: 12, fontWeight: 600, fontFamily: FONT.ui, cursor: "pointer", minWidth: 100, outline: "none" }}>
+                        <option value="">Year</option>
+                        {modelYears.map(y => <option key={y} value={y}>{y}</option>)}
+                    </select>
+                )}
+
+                {/* Active Filter Badge + Clear */}
+                {vehicleMatchStr && (
+                    <>
+                        <div style={{ background: T.amberGlow, border: `1px solid ${T.amber}44`, borderRadius: 8, padding: "6px 14px", display: "flex", alignItems: "center", gap: 8 }}>
+                            <span style={{ fontSize: 12, fontWeight: 700, color: T.amber }}>✅ Filtering: {vehicleMatchStr}{selYear ? ` (${selYear})` : ""}</span>
+                        </div>
+                        <button onClick={() => { setSelBrand(""); setSelModel(""); setSelYear(""); }}
+                            style={{ background: "transparent", border: `1px solid ${T.border}`, borderRadius: 8, padding: "6px 14px", color: T.t3, fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: FONT.ui }}>
+                            ✕ Clear
+                        </button>
+                    </>
+                )}
+
+                <div style={{ flex: 1 }} />
+                <div style={{ fontSize: 11, color: T.t4 }}>{MANUFACTURERS.length} brands · {filtered.length} parts found</div>
+            </div>
+
             {/* Toolbar */}
             <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
                 <div style={{ flex: 1, minWidth: 220 }}>
@@ -111,49 +186,131 @@ export function InventoryPage({ products, movements, activeShopId, onAdd, onEdit
                 <table style={{ width: "100%", borderCollapse: "collapse" }}>
                     <thead>
                         <tr style={{ background: T.surface, borderBottom: `1px solid ${T.border}` }}>
-                            {["", "Product", "Cat.", "Buy", "Sell", "Profit", "Margin", "Stock", "Location", "Status", ""].map((h, i) => (
+                            {["", "Product", "Cat.", "OEM", "Buy", "Sell", "Profit", "Margin", "Stock", "Location", "Status", ""].map((h, i) => (
                                 <th key={i} style={{ padding: "10px 12px", textAlign: "left", color: T.t3, fontWeight: 600, fontSize: 10, textTransform: "uppercase", letterSpacing: "0.08em", fontFamily: FONT.ui, whiteSpace: "nowrap" }}>{h}</th>
                             ))}
                         </tr>
                     </thead>
                     <tbody>
                         {filtered.length === 0 ? (
-                            <tr><td colSpan={11} style={{ padding: "48px", textAlign: "center", color: T.t3, fontFamily: FONT.ui, fontSize: 14 }}>No products match your filters.</td></tr>
+                            <tr><td colSpan={12} style={{ padding: "48px", textAlign: "center", color: T.t3, fontFamily: FONT.ui, fontSize: 14 }}>No products match your filters.</td></tr>
                         ) : filtered.map(p => {
                             const profit_u = p.sellPrice - p.buyPrice;
                             const mg = margin(p.buyPrice, p.sellPrice);
                             const st = stockStatus(p);
                             return (
-                                <tr key={p.id} className="row-hover" style={{ borderBottom: `1px solid ${T.border}`, background: T.card }}>
-                                    <td style={{ padding: "10px 10px 10px 14px", fontSize: 22 }}>{p.image}</td>
-                                    <td style={{ padding: "10px 12px", maxWidth: 190 }}>
-                                        <div style={{ fontWeight: 700, color: T.t1, fontSize: 13, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{p.name}</div>
-                                        <div style={{ fontSize: 11, color: T.t3, fontFamily: FONT.mono, marginTop: 2 }}>{p.sku}</div>
-                                    </td>
-                                    <td style={{ padding: "10px 12px" }}>
-                                        <span style={{ background: `${T.amber}14`, color: T.amber, fontSize: 10, padding: "2px 8px", borderRadius: 5, fontWeight: 700, fontFamily: FONT.ui }}>{p.category}</span>
-                                    </td>
-                                    <td style={{ padding: "10px 12px", color: T.t3, fontFamily: FONT.mono, fontSize: 12 }}>{fmt(p.buyPrice)}</td>
-                                    <td style={{ padding: "10px 12px", color: T.t1, fontFamily: FONT.mono, fontSize: 13, fontWeight: 700 }}>{fmt(p.sellPrice)}</td>
-                                    <td style={{ padding: "10px 12px", fontFamily: FONT.mono, fontSize: 13, fontWeight: 800, color: profit_u > 0 ? T.emerald : T.crimson }}>{fmt(profit_u)}</td>
-                                    <td style={{ padding: "10px 12px", fontFamily: FONT.mono, fontSize: 12 }}>
-                                        <span style={{ color: +mg > 30 ? T.emerald : +mg > 15 ? T.amber : T.crimson, fontWeight: 700 }}>{mg}%</span>
-                                    </td>
-                                    <td style={{ padding: "10px 12px" }}>
-                                        <span style={{ fontFamily: FONT.mono, fontWeight: 800, fontSize: 16, color: p.stock === 0 ? T.crimson : p.stock < p.minStock ? T.amber : T.t1 }}>{p.stock}</span>
-                                        <span style={{ fontSize: 10, color: T.t4, fontFamily: FONT.mono }}> /{p.minStock}</span>
-                                    </td>
-                                    <td style={{ padding: "10px 12px", fontFamily: FONT.mono, fontSize: 11, color: T.t3 }}>{p.location}</td>
-                                    <td style={{ padding: "10px 12px" }}><Badge status={st} /></td>
-                                    <td style={{ padding: "10px 14px 10px 10px" }}>
-                                        <div style={{ display: "flex", gap: 5 }}>
-                                            <Btn size="xs" variant="subtle" onClick={() => onEdit(p)}>Edit</Btn>
-                                            <Btn size="xs" variant="sky" onClick={() => setPurchP(p)}>📥 Buy</Btn>
-                                            <Btn size="xs" variant="amber" onClick={() => setSaleP(p)}>📤 Sell</Btn>
-                                            <Btn size="xs" variant="ghost" onClick={() => setAdjP(p)} style={{ borderColor: T.border }}>⚖️</Btn>
-                                        </div>
-                                    </td>
-                                </tr>
+                                <>
+                                    <tr key={p.id} className="row-hover" onClick={() => setExpandedId(expandedId === p.id ? null : p.id)} style={{ borderBottom: expandedId === p.id ? "none" : `1px solid ${T.border}`, background: expandedId === p.id ? T.surface : T.card, cursor: "pointer", transition: "background 0.15s" }}>
+                                        <td style={{ padding: "10px 10px 10px 14px", fontSize: 22 }}>{p.image}</td>
+                                        <td style={{ padding: "10px 12px", maxWidth: 220 }}>
+                                            <div style={{ fontWeight: 700, color: T.t1, fontSize: 13, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{p.name}</div>
+                                            <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 2 }}>
+                                                <span style={{ fontSize: 11, color: T.t3, fontFamily: FONT.mono }}>{p.sku}</span>
+                                                {vehicleMatchStr && (() => {
+                                                    const compat = isProductCompatible(p, vehicleMatchStr);
+                                                    if (compat === "compatible") return <span style={{ fontSize: 9, fontWeight: 800, color: T.emerald, background: T.emeraldBg, padding: "1px 6px", borderRadius: 4 }}>✅ Compatible</span>;
+                                                    if (compat === "universal") return <span style={{ fontSize: 9, fontWeight: 800, color: T.sky, background: T.skyBg, padding: "1px 6px", borderRadius: 4 }}>🔄 Universal</span>;
+                                                    return null;
+                                                })()}
+                                            </div>
+                                        </td>
+                                        <td style={{ padding: "10px 12px" }}>
+                                            <span style={{ background: `${T.amber}14`, color: T.amber, fontSize: 10, padding: "2px 8px", borderRadius: 5, fontWeight: 700, fontFamily: FONT.ui }}>{p.category}</span>
+                                        </td>
+                                        <td style={{ padding: "10px 12px", fontFamily: FONT.mono, fontSize: 11, color: p.oemNumber ? T.t2 : T.t4 }}>{p.oemNumber || "—"}</td>
+                                        <td style={{ padding: "10px 12px", color: T.t3, fontFamily: FONT.mono, fontSize: 12 }}>{fmt(p.buyPrice)}</td>
+                                        <td style={{ padding: "10px 12px", color: T.t1, fontFamily: FONT.mono, fontSize: 13, fontWeight: 700 }}>{fmt(p.sellPrice)}</td>
+                                        <td style={{ padding: "10px 12px", fontFamily: FONT.mono, fontSize: 13, fontWeight: 800, color: profit_u > 0 ? T.emerald : T.crimson }}>{fmt(profit_u)}</td>
+                                        <td style={{ padding: "10px 12px", fontFamily: FONT.mono, fontSize: 12 }}>
+                                            <span style={{ color: +mg > 30 ? T.emerald : +mg > 15 ? T.amber : T.crimson, fontWeight: 700 }}>{mg}%</span>
+                                        </td>
+                                        <td style={{ padding: "10px 12px" }}>
+                                            <span style={{ fontFamily: FONT.mono, fontWeight: 800, fontSize: 16, color: p.stock === 0 ? T.crimson : p.stock < p.minStock ? T.amber : T.t1 }}>{p.stock}</span>
+                                            <span style={{ fontSize: 10, color: T.t4, fontFamily: FONT.mono }}> /{p.minStock}</span>
+                                        </td>
+                                        <td style={{ padding: "10px 12px", fontFamily: FONT.mono, fontSize: 11, color: T.t3 }}>{p.location}</td>
+                                        <td style={{ padding: "10px 12px" }}><Badge status={st} /></td>
+                                        <td style={{ padding: "10px 14px 10px 10px" }}>
+                                            <div style={{ display: "flex", gap: 5 }} onClick={e => e.stopPropagation()}>
+                                                <Btn size="xs" variant="subtle" onClick={() => onEdit(p)}>Edit</Btn>
+                                                <Btn size="xs" variant="ghost" onClick={() => setAdjP(p)} style={{ borderColor: T.border }}>⚖️</Btn>
+                                            </div>
+                                        </td>
+                                    </tr>
+                                    {/* Expandable Detail Panel */}
+                                    {expandedId === p.id && (
+                                        <tr style={{ background: T.surface, borderBottom: `1px solid ${T.border}` }}>
+                                            <td colSpan={12} style={{ padding: 0 }}>
+                                                <div style={{ padding: "16px 24px 20px", animation: "fadeIn 0.2s ease" }}>
+                                                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
+                                                        <div style={{ fontSize: 14, fontWeight: 800, color: T.t1, display: "flex", gap: 8, alignItems: "center" }}>
+                                                            <span style={{ fontSize: 18 }}>{p.image}</span> {p.name}
+                                                            <span style={{ fontSize: 10, color: T.t4, fontWeight: 500 }}>— Automobile Details</span>
+                                                        </div>
+                                                        <button onClick={(e) => { e.stopPropagation(); setExpandedId(null); }} style={{ background: "transparent", border: `1px solid ${T.border}`, borderRadius: 6, padding: "3px 10px", color: T.t3, fontSize: 11, cursor: "pointer", fontFamily: FONT.ui }}>✕ Close</button>
+                                                    </div>
+                                                    <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12 }}>
+                                                        {/* OEM Number */}
+                                                        <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: 10, padding: "12px 14px" }}>
+                                                            <div style={{ fontSize: 9, color: T.t4, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 6 }}>OEM Number</div>
+                                                            <div style={{ fontSize: 14, fontWeight: 800, fontFamily: FONT.mono, color: p.oemNumber ? T.amber : T.t4 }}>{p.oemNumber || "Not Available"}</div>
+                                                        </div>
+                                                        {/* SKU */}
+                                                        <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: 10, padding: "12px 14px" }}>
+                                                            <div style={{ fontSize: 9, color: T.t4, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 6 }}>SKU Number</div>
+                                                            <div style={{ fontSize: 14, fontWeight: 800, fontFamily: FONT.mono, color: T.sky }}>{p.sku || "Not Available"}</div>
+                                                        </div>
+                                                        {/* Position */}
+                                                        <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: 10, padding: "12px 14px" }}>
+                                                            <div style={{ fontSize: 9, color: T.t4, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 6 }}>Position</div>
+                                                            <div style={{ fontSize: 14, fontWeight: 800, color: p.position ? T.emerald : T.t4 }}>{p.position || "Not Available"}</div>
+                                                        </div>
+                                                        {/* Engine Type */}
+                                                        <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: 10, padding: "12px 14px" }}>
+                                                            <div style={{ fontSize: 9, color: T.t4, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 6 }}>Engine Type</div>
+                                                            <div style={{ fontSize: 14, fontWeight: 800, color: p.engineType ? "#818CF8" : T.t4 }}>{p.engineType || "Not Available"}</div>
+                                                        </div>
+                                                        {/* Transmission */}
+                                                        <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: 10, padding: "12px 14px" }}>
+                                                            <div style={{ fontSize: 9, color: T.t4, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 6 }}>Transmission</div>
+                                                            <div style={{ fontSize: 14, fontWeight: 800, color: p.transmission ? T.amber : T.t4 }}>{p.transmission || "Not Available"}</div>
+                                                        </div>
+                                                        {/* Cross Reference */}
+                                                        <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: 10, padding: "12px 14px" }}>
+                                                            <div style={{ fontSize: 9, color: T.t4, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 6 }}>Cross Reference</div>
+                                                            <div style={{ fontSize: 12, fontWeight: 700, fontFamily: FONT.mono, color: p.crossRef ? T.t2 : T.t4 }}>{p.crossRef || "Not Available"}</div>
+                                                        </div>
+                                                        {/* Brand + Supplier */}
+                                                        <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: 10, padding: "12px 14px" }}>
+                                                            <div style={{ fontSize: 9, color: T.t4, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 6 }}>Brand / Supplier</div>
+                                                            <div style={{ fontSize: 13, fontWeight: 700, color: T.t1 }}>{p.brand || "—"}</div>
+                                                            <div style={{ fontSize: 11, color: T.t3, marginTop: 2 }}>{p.supplier || "—"}</div>
+                                                        </div>
+                                                        {/* Compatibility Summary */}
+                                                        <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: 10, padding: "12px 14px" }}>
+                                                            <div style={{ fontSize: 9, color: T.t4, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 6 }}>Compatibility</div>
+                                                            {(() => {
+                                                                const parts = [p.position, p.engineType, p.transmission].filter(Boolean);
+                                                                if (parts.length === 0) return <div style={{ fontSize: 12, color: T.t4 }}>Not Available</div>;
+                                                                return <div style={{ fontSize: 11, fontWeight: 600, color: T.emerald, lineHeight: 1.5 }}>{parts.join(" · ")}</div>;
+                                                            })()}
+                                                        </div>
+                                                    </div>
+                                                    {/* Location + Stock Details strip */}
+                                                    <div style={{ display: "flex", gap: 16, marginTop: 12, padding: "10px 14px", background: T.card, borderRadius: 8, border: `1px solid ${T.border}`, alignItems: "center", fontSize: 12 }}>
+                                                        <div><span style={{ color: T.t3, fontWeight: 600 }}>📍 Location: </span><span style={{ fontFamily: FONT.mono, color: T.t1, fontWeight: 700 }}>{p.location || "—"}</span></div>
+                                                        <div style={{ width: 1, height: 16, background: T.border }} />
+                                                        <div><span style={{ color: T.t3, fontWeight: 600 }}>📦 Stock: </span><span style={{ fontFamily: FONT.mono, fontWeight: 800, color: p.stock === 0 ? T.crimson : p.stock < p.minStock ? T.amber : T.emerald }}>{p.stock}</span><span style={{ color: T.t4 }}> / {p.minStock} min</span></div>
+                                                        <div style={{ width: 1, height: 16, background: T.border }} />
+                                                        <div><span style={{ color: T.t3, fontWeight: 600 }}>💰 Inventory Value: </span><span style={{ fontFamily: FONT.mono, fontWeight: 800, color: T.amber }}>{fmt(p.buyPrice * p.stock)}</span></div>
+                                                        <div style={{ width: 1, height: 16, background: T.border }} />
+                                                        <div><span style={{ color: T.t3, fontWeight: 600 }}>📈 Potential Revenue: </span><span style={{ fontFamily: FONT.mono, fontWeight: 800, color: T.emerald }}>{fmt(p.sellPrice * p.stock)}</span></div>
+                                                    </div>
+                                                </div>
+                                            </td>
+                                        </tr>
+                                    )}
+                                </>
                             );
                         })}
                     </tbody>

@@ -255,6 +255,109 @@ export function DashboardPage({ products, movements, orders, activeShopId, onNav
         </div>
       </div>
 
+      {/* 🚗 VEHICLE INTELLIGENCE PANEL */}
+      {(() => {
+        // Aggregate sales by vehicle registration (last N days based on period selector)
+        const vehicleSales = {};
+        curSales.forEach(m => {
+          const veh = m.vehicleReg;
+          if (!veh || !veh.trim()) return;
+          const key = veh.trim().toUpperCase();
+          if (!vehicleSales[key]) vehicleSales[key] = { vehicle: key, revenue: 0, partsSold: 0, partCounts: {}, transactions: 0 };
+          vehicleSales[key].revenue += m.total || 0;
+          vehicleSales[key].partsSold += m.qty || 0;
+          vehicleSales[key].transactions += 1;
+          const pName = m.productName || shopProducts.find(p => p.id === m.productId)?.name || "Unknown";
+          vehicleSales[key].partCounts[pName] = (vehicleSales[key].partCounts[pName] || 0) + (m.qty || 0);
+        });
+
+        const vehicleList = Object.values(vehicleSales)
+          .map(v => {
+            const partEntries = Object.entries(v.partCounts).sort((a, b) => b[1] - a[1]);
+            return { ...v, topPart: partEntries[0]?.[0] || "—", topPartQty: partEntries[0]?.[1] || 0 };
+          })
+          .sort((a, b) => b.revenue - a.revenue)
+          .slice(0, 5);
+
+        const totalVehicleRevenue = vehicleList.reduce((s, v) => s + v.revenue, 0);
+
+        if (vehicleList.length === 0) {
+          return (
+            <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: 14, padding: 20 }}>
+              <div style={{ fontSize: 16, fontWeight: 800, color: T.t1, display: "flex", gap: 8, alignItems: "center", marginBottom: 8 }}>
+                <span style={{ fontSize: 20 }}>🚗</span> Vehicle Intelligence Panel
+              </div>
+              <div style={{ fontSize: 12, color: T.t3, marginBottom: 16 }}>Top vehicles by sales · Last {days} days</div>
+              <div style={{ textAlign: "center", padding: "30px 20px", background: T.surface, borderRadius: 12, border: `1px dashed ${T.border}` }}>
+                <div style={{ fontSize: 32, marginBottom: 10 }}>🚗</div>
+                <div style={{ fontSize: 14, fontWeight: 700, color: T.t2, marginBottom: 6 }}>No Vehicle Data Yet</div>
+                <div style={{ fontSize: 12, color: T.t3, maxWidth: 340, margin: "0 auto" }}>
+                  Add vehicle registration numbers when recording sales in POS Billing to see vehicle-wise analytics here.
+                </div>
+              </div>
+            </div>
+          );
+        }
+
+        return (
+          <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: 14, padding: 20 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+              <div>
+                <div style={{ fontSize: 16, fontWeight: 800, color: T.t1, letterSpacing: "-0.01em", display: "flex", gap: 8, alignItems: "center" }}>
+                  <span style={{ fontSize: 20 }}>🚗</span> Vehicle Intelligence Panel
+                </div>
+                <div style={{ fontSize: 12, color: T.t3, marginTop: 2 }}>Top vehicles by sales · Last {days} days</div>
+              </div>
+              <div style={{ background: T.amberGlow, border: `1px solid ${T.amber}33`, borderRadius: 8, padding: "6px 14px" }}>
+                <div style={{ fontSize: 10, color: T.t3, fontWeight: 600, textTransform: "uppercase" }}>Total from top 5</div>
+                <div style={{ fontSize: 16, fontWeight: 900, color: T.amber, fontFamily: FONT.mono }}>{fmt(totalVehicleRevenue)}</div>
+              </div>
+            </div>
+
+            <div style={{ display: "grid", gridTemplateColumns: `repeat(${Math.min(vehicleList.length, 5)}, 1fr)`, gap: 12 }}>
+              {vehicleList.map((v, i) => {
+                const medals = ["🥇", "🥈", "🥉", "4️⃣", "5️⃣"];
+                const barWidth = totalVehicleRevenue > 0 ? Math.max(8, (v.revenue / totalVehicleRevenue) * 100) : 0;
+                return (
+                  <div key={v.vehicle} style={{
+                    background: i === 0 ? T.amberGlow : T.surface,
+                    border: `1px solid ${i === 0 ? T.amber + "33" : T.border}`,
+                    borderRadius: 12, padding: "16px 14px", display: "flex", flexDirection: "column", gap: 10
+                  }}>
+                    <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                      <span style={{ fontSize: 18 }}>{medals[i]}</span>
+                      <div style={{ fontFamily: FONT.mono, fontWeight: 800, fontSize: 13, color: T.t1, letterSpacing: "0.04em" }}>{v.vehicle}</div>
+                    </div>
+                    <div>
+                      <div style={{ fontSize: 10, color: T.t3, fontWeight: 600, textTransform: "uppercase", marginBottom: 4 }}>Revenue</div>
+                      <div style={{ fontSize: 18, fontWeight: 900, fontFamily: FONT.mono, color: T.amber }}>{fmt(v.revenue)}</div>
+                      <div style={{ marginTop: 4, height: 4, borderRadius: 2, background: T.bg, overflow: "hidden" }}>
+                        <div style={{ width: `${barWidth}%`, height: "100%", borderRadius: 2, background: `linear-gradient(90deg, ${T.amber}, ${T.amberDim})`, transition: "width 0.4s" }} />
+                      </div>
+                    </div>
+                    <div style={{ display: "flex", justifyContent: "space-between" }}>
+                      <div>
+                        <div style={{ fontSize: 10, color: T.t3, fontWeight: 600 }}>Parts Sold</div>
+                        <div style={{ fontSize: 16, fontWeight: 800, fontFamily: FONT.mono, color: T.t1 }}>{v.partsSold}</div>
+                      </div>
+                      <div style={{ textAlign: "right" }}>
+                        <div style={{ fontSize: 10, color: T.t3, fontWeight: 600 }}>Bills</div>
+                        <div style={{ fontSize: 16, fontWeight: 800, fontFamily: FONT.mono, color: T.sky }}>{v.transactions}</div>
+                      </div>
+                    </div>
+                    <div style={{ background: T.card, borderRadius: 8, padding: "8px 10px", border: `1px solid ${T.border}` }}>
+                      <div style={{ fontSize: 9, color: T.t4, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 3 }}>Most Replaced</div>
+                      <div style={{ fontSize: 11, fontWeight: 700, color: T.emerald, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{v.topPart}</div>
+                      <div style={{ fontSize: 10, color: T.t3, marginTop: 1 }}>{v.topPartQty} units</div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        );
+      })()}
+
       {/* Dead stock */}
       {prodStats.filter(p => p.sold === 0 && p.stock > 0).length > 0 && (
         <div style={{ background: T.card, border: `1px solid rgba(239,68,68,0.25)`, borderRadius: 14, padding: 20 }}>
@@ -297,52 +400,8 @@ export function DashboardPage({ products, movements, orders, activeShopId, onNav
         </div>
       )}
 
-      {/* Workshop + Party Summary Row */}
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
-        {/* Workshop Status */}
-        <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: 14, padding: 20 }}>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
-            <div style={{ fontSize: 15, fontWeight: 800, color: T.t1 }}>🔧 Workshop Status</div>
-            <Btn size="xs" variant="subtle" onClick={() => onNavigate("workshop")}>View All →</Btn>
-          </div>
-          {(() => {
-            const shopJobs = (jobCards || []).filter(j => j.shopId === activeShopId);
-            const active = shopJobs.filter(j => ["in_progress", "approved", "estimated"].includes(j.status));
-            const completed = shopJobs.filter(j => j.status === "completed");
-            const totalEstimated = active.reduce((s, j) => s + (j.estimatedAmount || 0), 0);
-            return (
-              <>
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10, marginBottom: 14 }}>
-                  <div style={{ background: "rgba(129,140,248,0.1)", borderRadius: 10, padding: "10px 12px", textAlign: "center" }}>
-                    <div style={{ fontSize: 24, fontWeight: 900, color: "#818CF8", fontFamily: FONT.mono }}>{active.length}</div>
-                    <div style={{ fontSize: 10, color: T.t3, fontWeight: 600 }}>Active</div>
-                  </div>
-                  <div style={{ background: T.emeraldBg, borderRadius: 10, padding: "10px 12px", textAlign: "center" }}>
-                    <div style={{ fontSize: 24, fontWeight: 900, color: T.emerald, fontFamily: FONT.mono }}>{completed.length}</div>
-                    <div style={{ fontSize: 10, color: T.t3, fontWeight: 600 }}>Done</div>
-                  </div>
-                  <div style={{ background: T.amberGlow, borderRadius: 10, padding: "10px 12px", textAlign: "center" }}>
-                    <div style={{ fontSize: 18, fontWeight: 900, color: T.amber, fontFamily: FONT.mono }}>{fmt(totalEstimated)}</div>
-                    <div style={{ fontSize: 10, color: T.t3, fontWeight: 600 }}>Pipeline</div>
-                  </div>
-                </div>
-                {active.length > 0 ? active.slice(0, 3).map(j => {
-                  const veh = (vehicles || []).find(v => v.id === j.vehicleId);
-                  return (
-                    <div key={j.id} style={{ display: "flex", gap: 10, alignItems: "center", padding: "8px 10px", background: T.surface, borderRadius: 8, marginBottom: 6, fontSize: 12 }}>
-                      <span style={{ fontSize: 16 }}>{j.status === "in_progress" ? "🔧" : "📋"}</span>
-                      <div style={{ flex: 1 }}>
-                        <div style={{ fontWeight: 700, color: T.t1 }}>{j.jobNumber}</div>
-                        <div style={{ color: T.t3, fontSize: 11 }}>{veh ? `${veh.make} ${veh.model} · ${veh.registrationNumber}` : "Vehicle"}</div>
-                      </div>
-                      <span style={{ fontFamily: FONT.mono, color: T.amber, fontWeight: 700 }}>{fmt(j.estimatedAmount || 0)}</span>
-                    </div>
-                  );
-                }) : <div style={{ color: T.t3, fontSize: 12, textAlign: "center", padding: 12 }}>No active jobs.</div>}
-              </>
-            );
-          })()}
-        </div>
+      {/* Party Summary */}
+      <div style={{ display: "grid", gridTemplateColumns: "1fr", gap: 16 }}>
 
         {/* Party Outstanding Summary */}
         <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: 14, padding: 20 }}>
@@ -390,86 +449,70 @@ export function DashboardPage({ products, movements, orders, activeShopId, onNav
             );
           })()}
         </div>
-      </div>
-
-      {/* Quick Actions */}
-      <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: 14, padding: 20 }}>
-        <div style={{ fontSize: 15, fontWeight: 800, color: T.t1, marginBottom: 14 }}>⚡ Quick Actions</div>
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(150px, 1fr))", gap: 10 }}>
-          {[
-            { icon: "🧾", label: "New Sale", page: "pos", color: T.amber },
-            { icon: "📥", label: "Purchase", page: "inventory", color: T.sky },
-            { icon: "🔧", label: "New Job Card", page: "workshop", color: "#818CF8" },
-            { icon: "👤", label: "Add Customer", page: "parties", color: T.emerald },
-            { icon: "📊", label: "Reports", page: "reports", color: T.amber },
-            { icon: "📋", label: "GST Filing", page: "reports", color: T.crimson },
-          ].map(a => (
-            <button key={a.label} onClick={() => onNavigate(a.page)} className="row-hover" style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 10, padding: "14px 16px", cursor: "pointer", textAlign: "left", transition: "0.15s", display: "flex", gap: 10, alignItems: "center" }}>
-              <span style={{ fontSize: 20 }}>{a.icon}</span>
-              <span style={{ fontSize: 13, fontWeight: 700, color: a.color, fontFamily: FONT.ui }}>{a.label}</span>
-            </button>
-          ))}
-        </div>
-      </div>
+      </div >
 
       {/* Payment Reminders */}
-      {(() => {
-        const overdue = getOverduePayments(shopMovements, parties || []);
-        if (overdue.length === 0) return null;
-        const totalOverdue = overdue.reduce((s, c) => s + c.total, 0);
-        return (
-          <div style={{ background: T.card, border: `1px solid rgba(239,68,68,0.25)`, borderRadius: 14, padding: 20 }}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
-              <div>
-                <div style={{ fontSize: 15, fontWeight: 800, color: T.crimson }}>📢 Payment Reminders ({overdue.length})</div>
-                <div style={{ fontSize: 12, color: T.t3, marginTop: 2 }}>Total overdue: <span style={{ color: T.crimson, fontWeight: 800, fontFamily: FONT.mono }}>{fmt(totalOverdue)}</span></div>
-              </div>
-              <Btn size="xs" variant="subtle" onClick={() => onNavigate("parties")}>View All →</Btn>
-            </div>
-            {overdue.slice(0, 4).map(c => (
-              <div key={c.name} style={{ display: "flex", gap: 12, alignItems: "center", padding: "10px 12px", background: T.crimsonBg, borderRadius: 10, marginBottom: 6, border: `1px solid rgba(239,68,68,0.15)` }}>
-                <span style={{ fontSize: 18 }}>👤</span>
-                <div style={{ flex: 1 }}>
-                  <div style={{ fontWeight: 700, color: T.t1, fontSize: 13 }}>{c.name}</div>
-                  <div style={{ fontSize: 11, color: T.t3 }}>{c.invoices.length} invoice{c.invoices.length > 1 ? "s" : ""} · {c.daysOverdue} days overdue</div>
+      {
+        (() => {
+          const overdue = getOverduePayments(shopMovements, parties || []);
+          if (overdue.length === 0) return null;
+          const totalOverdue = overdue.reduce((s, c) => s + c.total, 0);
+          return (
+            <div style={{ background: T.card, border: `1px solid rgba(239,68,68,0.25)`, borderRadius: 14, padding: 20 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
+                <div>
+                  <div style={{ fontSize: 15, fontWeight: 800, color: T.crimson }}>📢 Payment Reminders ({overdue.length})</div>
+                  <div style={{ fontSize: 12, color: T.t3, marginTop: 2 }}>Total overdue: <span style={{ color: T.crimson, fontWeight: 800, fontFamily: FONT.mono }}>{fmt(totalOverdue)}</span></div>
                 </div>
-                <span style={{ fontSize: 16, fontWeight: 900, fontFamily: FONT.mono, color: T.crimson }}>{fmt(c.total)}</span>
-                {c.phone && (
-                  <button onClick={() => {
-                    const msg = generateReminderMessage(c);
-                    window.open(`https://wa.me/${c.phone.replace(/[^0-9]/g, "")}?text=${encodeURIComponent(msg)}`, "_blank");
-                  }} style={{ background: "#25D366", border: "none", borderRadius: 6, padding: "6px 10px", cursor: "pointer", fontSize: 11, fontWeight: 700, color: "#fff" }}>
-                    💬 Remind
-                  </button>
-                )}
+                <Btn size="xs" variant="subtle" onClick={() => onNavigate("parties")}>View All →</Btn>
               </div>
-            ))}
-          </div>
-        );
-      })()}
-
-      {/* Expiring Stock */}
-      {(() => {
-        const expiring = getExpiringProducts(shopProducts, 60);
-        if (expiring.length === 0) return null;
-        return (
-          <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: 14, padding: 20 }}>
-            <div style={{ fontSize: 15, fontWeight: 800, color: T.amber, marginBottom: 14 }}>⏳ Expiring Stock ({expiring.length} items)</div>
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(200px, 1fr))", gap: 10 }}>
-              {expiring.slice(0, 6).map(p => (
-                <div key={p.id} style={{ background: p.isExpired ? T.crimsonBg : T.amberGlow, border: `1px solid ${p.isExpired ? "rgba(239,68,68,0.2)" : "rgba(245,158,11,0.2)"}`, borderRadius: 10, padding: "12px 14px" }}>
-                  <span style={{ fontSize: 20 }}>{p.image}</span>
-                  <div style={{ fontWeight: 700, color: T.t1, fontSize: 13, marginTop: 4, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.name}</div>
-                  <div style={{ fontSize: 12, color: p.isExpired ? T.crimson : T.amber, fontWeight: 800, marginTop: 4 }}>
-                    {p.isExpired ? `❌ EXPIRED ${Math.abs(p.daysLeft)}d ago` : `⏰ ${p.daysLeft} days left`}
+              {overdue.slice(0, 4).map(c => (
+                <div key={c.name} style={{ display: "flex", gap: 12, alignItems: "center", padding: "10px 12px", background: T.crimsonBg, borderRadius: 10, marginBottom: 6, border: `1px solid rgba(239,68,68,0.15)` }}>
+                  <span style={{ fontSize: 18 }}>👤</span>
+                  <div style={{ flex: 1 }}>
+                    <div style={{ fontWeight: 700, color: T.t1, fontSize: 13 }}>{c.name}</div>
+                    <div style={{ fontSize: 11, color: T.t3 }}>{c.invoices.length} invoice{c.invoices.length > 1 ? "s" : ""} · {c.daysOverdue} days overdue</div>
                   </div>
-                  <div style={{ fontSize: 11, color: T.t3, marginTop: 2 }}>{p.stock} units · Batch: {p.batchNumber || "N/A"}</div>
+                  <span style={{ fontSize: 16, fontWeight: 900, fontFamily: FONT.mono, color: T.crimson }}>{fmt(c.total)}</span>
+                  {c.phone && (
+                    <button onClick={() => {
+                      const msg = generateReminderMessage(c);
+                      window.open(`https://wa.me/${c.phone.replace(/[^0-9]/g, "")}?text=${encodeURIComponent(msg)}`, "_blank");
+                    }} style={{ background: "#25D366", border: "none", borderRadius: 6, padding: "6px 10px", cursor: "pointer", fontSize: 11, fontWeight: 700, color: "#fff" }}>
+                      💬 Remind
+                    </button>
+                  )}
                 </div>
               ))}
             </div>
-          </div>
-        );
-      })()}
-    </div>
+          );
+        })()
+      }
+
+      {/* Expiring Stock */}
+      {
+        (() => {
+          const expiring = getExpiringProducts(shopProducts, 60);
+          if (expiring.length === 0) return null;
+          return (
+            <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: 14, padding: 20 }}>
+              <div style={{ fontSize: 15, fontWeight: 800, color: T.amber, marginBottom: 14 }}>⏳ Expiring Stock ({expiring.length} items)</div>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(200px, 1fr))", gap: 10 }}>
+                {expiring.slice(0, 6).map(p => (
+                  <div key={p.id} style={{ background: p.isExpired ? T.crimsonBg : T.amberGlow, border: `1px solid ${p.isExpired ? "rgba(239,68,68,0.2)" : "rgba(245,158,11,0.2)"}`, borderRadius: 10, padding: "12px 14px" }}>
+                    <span style={{ fontSize: 20 }}>{p.image}</span>
+                    <div style={{ fontWeight: 700, color: T.t1, fontSize: 13, marginTop: 4, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.name}</div>
+                    <div style={{ fontSize: 12, color: p.isExpired ? T.crimson : T.amber, fontWeight: 800, marginTop: 4 }}>
+                      {p.isExpired ? `❌ EXPIRED ${Math.abs(p.daysLeft)}d ago` : `⏰ ${p.daysLeft} days left`}
+                    </div>
+                    <div style={{ fontSize: 11, color: T.t3, marginTop: 2 }}>{p.stock} units · Batch: {p.batchNumber || "N/A"}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          );
+        })()
+      }
+    </div >
   );
 }

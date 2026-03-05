@@ -30,7 +30,6 @@ const NAV_ITEMS = [
   { key: "inventory", icon: "⬡", label: "Inventory", shortcut: "I" },
   { key: "pos", icon: "🧾", label: "POS Billing", shortcut: "P" },
   { key: "parties", icon: "👥", label: "Parties", shortcut: "A" },
-  { key: "workshop", icon: "🔧", label: "Workshop", shortcut: "W" },
   { key: "history", icon: "⊞", label: "History", shortcut: "H" },
   { key: "reports", icon: "📊", label: "Reports", shortcut: "R" },
   { key: "orders", icon: "◎", label: "Orders", shortcut: "O" },
@@ -39,7 +38,7 @@ const NAV_ITEMS = [
 export default function App() {
   const {
     products, movements, orders, shops, parties, vehicles, jobCards,
-    saveProducts, saveMovements, saveOrders, saveParties, saveVehicles, saveJobCards,
+    saveProducts, saveMovements, saveOrders, saveShops, saveParties, saveVehicles, saveJobCards,
     auditLog, receipts, saveReceipts,
     loaded, activeShopId, marketplacePage, setMarketplacePage,
     logAudit, resetAll
@@ -51,6 +50,7 @@ export default function App() {
   // APP MODE TOGGLE STATE
   const [appMode, setAppMode] = useState("marketplace");
   const [mpPdpId, setMpPdpId] = useState(null);
+  const [shopEdit, setShopEdit] = useState(null); // { name, city } or null
 
   const saveProduct = useCallback((p) => {
     const exists = products.find(x => x.id === p.id);
@@ -66,7 +66,7 @@ export default function App() {
       saveProducts(updated);
     }
     const sel = products.find(p => p.id === data.productId);
-    const isCredit = data.payments && data.payments.Credit > 0;
+    const isCredit = data.paymentMode === "Udhaar" || (data.payments && data.payments.Credit > 0);
     const paymentStr = data.payments ? Object.entries(data.payments).filter(([_, amt]) => amt > 0).map(([k, amt]) => `${k}:${amt}`).join(", ") : data.payment;
 
     saveMovements([...movements, {
@@ -75,12 +75,16 @@ export default function App() {
       total: data.total, gstAmount: data.gstAmount, profit: isQuote ? 0 : data.profit,
       discount: data.discount, customerName: data.customerName, customerPhone: data.customerPhone,
       vehicleReg: data.vehicleReg, mechanic: data.mechanic, supplier: null, invoiceNo: data.invoiceNo,
-      payment: paymentStr, creditDays: 0, paymentStatus: isCredit && !isQuote ? "pending" : "paid",
+      payment: paymentStr, paymentMode: data.paymentMode || null, creditDays: 0, paymentStatus: isCredit && !isQuote ? "pending" : "paid",
       note: [data.customerName && `Customer: ${data.customerName}`, data.vehicleReg && `Vehicle: ${data.vehicleReg}`, data.notes].filter(Boolean).join(" · ") || (isQuote ? "Quotation generated" : "Walk-in sale"),
       date: data.date,
+      ...(data.priceOverride && { priceOverride: data.priceOverride }),
     }]);
 
     logAudit(isQuote ? "QUOTATION_CREATED" : "SALE_RECORDED", "movement", data.invoiceNo, `${data.qty}×${sel?.name?.slice(0, 20)} · ${fmt(data.total)}`);
+    if (data.priceOverride) {
+      logAudit("PRICE_OVERRIDE", "movement", data.invoiceNo, `${sel?.name?.slice(0, 20)}: ${fmt(data.priceOverride.originalPrice)} → ${fmt(data.priceOverride.overriddenPrice)} (${data.priceOverride.reason || "no reason"})`);
+    }
     toast(isQuote ? `Quotation Generated: ${data.invoiceNo}` : `Sale recorded: ${data.qty}×${sel?.name?.slice(0, 20) || "product"} · ${fmt(data.total)}`, isQuote ? "info" : "success", isQuote ? "Estimate Saved" : "Sale Complete");
   }, [products, movements, saveProducts, saveMovements, toast, activeShopId, logAudit]);
 
@@ -89,13 +93,14 @@ export default function App() {
     const isQuote = data.type === "Quotation";
     const newMovements = [];
     let updatedProducts = [...products];
+    let hasOverrides = false;
 
     // Process each line item
     data.items.forEach(item => {
       if (!isQuote) {
         updatedProducts = updatedProducts.map(p => p.id === item.productId ? { ...p, stock: Math.max(0, p.stock - item.qty) } : p);
       }
-      const isCredit = data.payments && data.payments.Credit > 0;
+      const isCredit = data.paymentMode === "Udhaar" || (data.payments && data.payments.Credit > 0);
       const paymentStr = data.payments ? Object.entries(data.payments).filter(([_, amt]) => amt > 0).map(([k, amt]) => `${k}:${amt}`).join(", ") : "";
 
       newMovements.push({
@@ -105,18 +110,24 @@ export default function App() {
         discount: item.discount, customerName: data.customerName, customerPhone: data.customerPhone,
         vehicleReg: data.vehicleReg, mechanic: data.mechanic, supplier: null,
         invoiceNo: data.invoiceNo, // Same invoice number for all line items!
-        payment: paymentStr, creditDays: 0,
+        payment: paymentStr, paymentMode: data.paymentMode || null, creditDays: 0,
         paymentStatus: isCredit && !isQuote ? "pending" : "paid",
         note: [data.customerName && `Customer: ${data.customerName}`, data.vehicleReg && `Vehicle: ${data.vehicleReg}`, data.notes].filter(Boolean).join(" · ") || (isQuote ? "Quotation" : "POS Sale"),
         date: data.date,
-        multiItemInvoice: true, // Flag to identify multi-item invoices
+        multiItemInvoice: true,
+        ...(item.priceOverride && { priceOverride: item.priceOverride }),
       });
+
+      if (item.priceOverride) {
+        hasOverrides = true;
+        logAudit("PRICE_OVERRIDE", "movement", data.invoiceNo, `${item.name?.slice(0, 20)}: ${fmt(item.priceOverride.originalPrice)} → ${fmt(item.priceOverride.overriddenPrice)} (${item.priceOverride.reason || "no reason"})`);
+      }
     });
 
     saveProducts(updatedProducts);
     saveMovements([...movements, ...newMovements]);
 
-    logAudit(isQuote ? "MULTI_QUOTATION_CREATED" : "MULTI_SALE_RECORDED", "movement", data.invoiceNo, `${data.items.length} items · ${fmt(data.total)}`);
+    logAudit(isQuote ? "MULTI_QUOTATION_CREATED" : "MULTI_SALE_RECORDED", "movement", data.invoiceNo, `${data.items.length} items · ${fmt(data.total)}${hasOverrides ? " · price override(s)" : ""}`);
     toast(
       isQuote ? `Quotation: ${data.items.length} items · ${fmt(data.total)}`
         : `Sale recorded: ${data.items.length} items · ${fmt(data.total)}`,
@@ -228,15 +239,45 @@ export default function App() {
 
     return (
       <>
-        {renderMpPage()}
-        <CartDrawer />
-        <div style={{ position: "fixed", bottom: 20, right: 20, zIndex: 99999, display: "flex", flexDirection: "column", gap: 10 }}>
-          {mpPage !== "tracking" && <button onClick={() => setMpPage("tracking")} style={{ background: T.card, border: `1px solid ${T.border}`, color: T.t2, borderRadius: 30, padding: "10px 18px", fontSize: 12, fontWeight: 700, cursor: "pointer", display: "flex", alignItems: "center", gap: 8, boxShadow: "0 4px 20px rgba(0,0,0,0.3)" }}>📦 My Orders</button>}
-          {mpPage !== "pricing" && <button onClick={() => setMpPage("pricing")} style={{ background: T.card, border: `1px solid ${T.amber}44`, color: T.amber, borderRadius: 30, padding: "10px 18px", fontSize: 12, fontWeight: 700, cursor: "pointer", display: "flex", alignItems: "center", gap: 8, boxShadow: "0 4px 20px rgba(0,0,0,0.3)" }}>💎 Pricing</button>}
-          <button onClick={() => setAppMode("shopOwner")} style={{ background: "#4F46E5", color: "#fff", border: "none", borderRadius: 30, padding: "12px 20px", fontSize: 13, fontWeight: 800, cursor: "pointer", display: "flex", alignItems: "center", gap: 8, boxShadow: "0 10px 40px rgba(79, 70, 229, 0.4)" }}>
-            🔄 Switch to Shop Owner View
-          </button>
+        <div style={{ paddingLeft: 68 }}>
+          {renderMpPage()}
         </div>
+        <CartDrawer />
+
+        {/* LEFT SIDE PANEL */}
+        {(() => {
+          const MP_ACTIONS = [
+            { icon: "📦", label: "Orders", page: "tracking", color: T.sky },
+            { icon: "💎", label: "Pricing", page: "pricing", color: T.amber },
+          ];
+          return (
+            <div style={{
+              position: "fixed", left: 0, top: 0, bottom: 0, width: 68, zIndex: 400,
+              background: `${T.surface}ee`, backdropFilter: "blur(12px)", borderRight: `1px solid ${T.border}`,
+              display: "flex", flexDirection: "column", alignItems: "center", paddingTop: 80, gap: 4,
+            }}>
+              <div style={{ fontSize: 8, color: T.t4, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 4 }}>Menu</div>
+              {MP_ACTIONS.map(a => (
+                <button key={a.label} onClick={() => setMpPage(a.page)} title={a.label}
+                  style={{
+                    width: 58, height: 50, borderRadius: 10, border: `1px solid ${mpPage === a.page ? a.color + "44" : T.border}`, cursor: "pointer",
+                    background: mpPage === a.page ? `${a.color}22` : "transparent",
+                    display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 2,
+                    transition: "all 0.15s", padding: "4px 0",
+                  }}>
+                  <span style={{ fontSize: 16 }}>{a.icon}</span>
+                  <span style={{ fontSize: 8, fontWeight: 700, color: mpPage === a.page ? a.color : T.t3, fontFamily: FONT.ui, letterSpacing: "0.02em" }}>{a.label}</span>
+                </button>
+              ))}
+              <div style={{ flex: 1 }} />
+              <button onClick={() => setAppMode("shopOwner")} title="Switch to Shop Owner"
+                style={{ width: 58, height: 50, borderRadius: 10, border: "none", cursor: "pointer", background: "#4F46E5", color: "#fff", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 2, marginBottom: 12, boxShadow: "0 4px 16px rgba(79,70,229,0.4)", padding: "4px 0" }}>
+                <span style={{ fontSize: 16 }}>🔄</span>
+                <span style={{ fontSize: 7, fontWeight: 700, letterSpacing: "0.02em" }}>Shop</span>
+              </button>
+            </div>
+          );
+        })()}
       </>
     );
   }
@@ -265,14 +306,38 @@ export default function App() {
 
       {/* TOPBAR */}
       <div style={{ height: 56, background: T.surface, borderBottom: `1px solid ${T.border}`, display: "flex", alignItems: "center", padding: "0 20px", position: "sticky", top: 0, zIndex: 500, gap: 10 }}>
-        {/* Brand */}
-        <div style={{ display: "flex", alignItems: "center", gap: 10, marginRight: 12 }}>
-          <div style={{ width: 36, height: 36, background: `linear-gradient(135deg,${T.amber},${T.amberDim})`, borderRadius: 10, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 18, fontWeight: 900, color: "#000", boxShadow: `0 2px 12px ${T.amber}55`, letterSpacing: "-0.05em" }}>R</div>
-          <div>
-            <div style={{ fontSize: 14, fontWeight: 800, color: T.t1, letterSpacing: "-0.02em" }}>Ravi Auto Parts</div>
-            <div style={{ fontSize: 10, color: T.amber, fontWeight: 600, letterSpacing: "0.04em" }}>INVENTORY · HYDERABAD</div>
-          </div>
-        </div>
+        {/* Brand — click to edit */}
+        {(() => {
+          const shop = (shops || []).find(s => s.id === activeShopId) || { name: "My Shop", city: "Location" };
+          return (
+            <div style={{ display: "flex", alignItems: "center", gap: 10, marginRight: 12, position: "relative" }}>
+              <div style={{ width: 36, height: 36, background: `linear-gradient(135deg,${T.amber},${T.amberDim})`, borderRadius: 10, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 18, fontWeight: 900, color: "#000", boxShadow: `0 2px 12px ${T.amber}55`, letterSpacing: "-0.05em" }}>{shop.name?.charAt(0) || "S"}</div>
+              <div onClick={() => setShopEdit({ name: shop.name, city: shop.city })} style={{ cursor: "pointer" }} title="Click to edit shop name & location">
+                <div style={{ fontSize: 14, fontWeight: 800, color: T.t1, letterSpacing: "-0.02em", display: "flex", alignItems: "center", gap: 4 }}>{shop.name} <span style={{ fontSize: 10, color: T.t4 }}>✏️</span></div>
+                <div style={{ fontSize: 10, color: T.amber, fontWeight: 600, letterSpacing: "0.04em" }}>INVENTORY · {shop.city?.toUpperCase() || "LOCATION"}</div>
+              </div>
+
+              {/* Edit Popover */}
+              {shopEdit && (
+                <div style={{ position: "absolute", top: 48, left: 0, zIndex: 9999, background: T.card, border: `1px solid ${T.border}`, borderRadius: 12, padding: 16, boxShadow: "0 12px 40px rgba(0,0,0,0.5)", width: 280 }}>
+                  <div style={{ fontSize: 13, fontWeight: 800, color: T.t1, marginBottom: 12 }}>Edit Shop Details</div>
+                  <div style={{ marginBottom: 10 }}>
+                    <label style={{ fontSize: 10, color: T.t3, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.06em", display: "block", marginBottom: 4 }}>Shop Name</label>
+                    <input value={shopEdit.name} onChange={e => setShopEdit(prev => ({ ...prev, name: e.target.value }))} style={{ width: "100%", background: T.surface, border: `1px solid ${T.border}`, borderRadius: 8, padding: "8px 10px", color: T.t1, fontSize: 13, fontWeight: 600, fontFamily: FONT.ui, outline: "none", boxSizing: "border-box" }} />
+                  </div>
+                  <div style={{ marginBottom: 14 }}>
+                    <label style={{ fontSize: 10, color: T.t3, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.06em", display: "block", marginBottom: 4 }}>Location / City</label>
+                    <input value={shopEdit.city} onChange={e => setShopEdit(prev => ({ ...prev, city: e.target.value }))} style={{ width: "100%", background: T.surface, border: `1px solid ${T.border}`, borderRadius: 8, padding: "8px 10px", color: T.t1, fontSize: 13, fontWeight: 600, fontFamily: FONT.ui, outline: "none", boxSizing: "border-box" }} />
+                  </div>
+                  <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+                    <button onClick={() => setShopEdit(null)} style={{ background: "transparent", border: `1px solid ${T.border}`, borderRadius: 8, padding: "6px 14px", color: T.t3, fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: FONT.ui }}>Cancel</button>
+                    <button onClick={() => { const updated = shops.map(s => s.id === activeShopId ? { ...s, name: shopEdit.name, city: shopEdit.city } : s); saveShops(updated); setShopEdit(null); toast("Shop details updated!", "emerald"); }} style={{ background: T.amber, border: "none", borderRadius: 8, padding: "6px 14px", color: "#000", fontSize: 12, fontWeight: 800, cursor: "pointer", fontFamily: FONT.ui }}>Save</button>
+                  </div>
+                </div>
+              )}
+            </div>
+          );
+        })()}
 
         {/* NAV */}
         <div style={{ display: "flex", gap: 2 }}>
@@ -311,7 +376,7 @@ export default function App() {
       </div>
 
       {/* PAGE CONTENT */}
-      <div style={{ padding: "24px 28px", maxWidth: 1440, margin: "0 auto" }}>
+      <div style={{ padding: "24px 28px 24px 92px", maxWidth: 1440, margin: "0 auto" }}>
         {renderPage()}
       </div>
 
@@ -321,12 +386,46 @@ export default function App() {
       {/* TOASTS */}
       <Toast items={toasts} onRemove={removeToast} />
 
-      {/* MARKETPLACE TOGGLE */}
-      <div style={{ position: "fixed", bottom: 20, right: 20, zIndex: 99999 }}>
-        <button onClick={() => setAppMode("marketplace")} style={{ background: "#4F46E5", color: "#fff", border: "none", borderRadius: 30, padding: "12px 20px", fontSize: 13, fontWeight: 800, cursor: "pointer", display: "flex", alignItems: "center", gap: 8, boxShadow: "0 10px 40px rgba(79, 70, 229, 0.4)" }}>
-          🔄 Switch to User Marketplace
-        </button>
-      </div>
+      {/* QUICK ACTIONS SIDE PANEL */}
+      {(() => {
+        const ACTIONS = [
+          { icon: "🧾", label: "New Sale", page: "pos", color: T.amber },
+          { icon: "📥", label: "Purchase", page: "inventory", color: T.sky },
+          { icon: "👤", label: "Parties", page: "parties", color: T.emerald },
+          { icon: "📊", label: "Reports", page: "reports", color: T.amber },
+          { icon: "📋", label: "History", page: "history", color: T.t2 },
+          { icon: "＋", label: "Product", action: () => setPModal({ open: true, product: null }), color: T.amber },
+        ];
+        return (
+          <div style={{
+            position: "fixed", left: 0, top: 56, bottom: 0, width: 68, zIndex: 400,
+            background: `${T.surface}ee`, backdropFilter: "blur(12px)", borderRight: `1px solid ${T.border}`,
+            display: "flex", flexDirection: "column", alignItems: "center", paddingTop: 12, gap: 4,
+          }}>
+            <div style={{ fontSize: 8, color: T.t4, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 4 }}>Quick</div>
+            {ACTIONS.map(a => (
+              <button key={a.label} onClick={a.action || (() => setPage(a.page))} title={a.label}
+                style={{
+                  width: 58, height: 50, borderRadius: 10, border: `1px solid ${page === a.page ? a.color + "44" : T.border}`, cursor: "pointer",
+                  background: page === a.page ? `${a.color}22` : "transparent",
+                  display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 2,
+                  transition: "all 0.15s", padding: "4px 0",
+                }}>
+                <span style={{ fontSize: 16 }}>{a.icon}</span>
+                <span style={{ fontSize: 8, fontWeight: 700, color: page === a.page ? a.color : T.t3, fontFamily: FONT.ui, letterSpacing: "0.02em" }}>{a.label}</span>
+              </button>
+            ))}
+            <div style={{ flex: 1 }} />
+            <button onClick={() => setAppMode("marketplace")} title="Switch to Marketplace"
+              style={{ width: 58, height: 50, borderRadius: 10, border: "none", cursor: "pointer", background: "#4F46E5", color: "#fff", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 2, marginBottom: 12, boxShadow: "0 4px 16px rgba(79,70,229,0.4)", padding: "4px 0" }}>
+              <span style={{ fontSize: 16 }}>🔄</span>
+              <span style={{ fontSize: 7, fontWeight: 700, letterSpacing: "0.02em" }}>Market</span>
+            </button>
+          </div>
+        );
+      })()}
+
+
     </div>
   );
 }

@@ -92,10 +92,14 @@ export function ProductDetailsPage({ productId, onBack }) {
         { label: "Brand", value: buyBoxWinner.brand },
         { label: "SKU", value: buyBoxWinner.sku },
         { label: "Category", value: buyBoxWinner.category },
+        buyBoxWinner.oemNumber && { label: "OEM Number", value: buyBoxWinner.oemNumber },
+        buyBoxWinner.position && { label: "Position", value: buyBoxWinner.position },
+        buyBoxWinner.engineType && { label: "Engine Type", value: buyBoxWinner.engineType },
+        buyBoxWinner.transmission && { label: "Transmission", value: buyBoxWinner.transmission },
         { label: "GST Rate", value: `${buyBoxWinner.gstRate || 18}%` },
         { label: "Unit", value: buyBoxWinner.unit || "pcs" },
         { label: "Compatible Vehicles", value: (buyBoxWinner.compatibleVehicles || []).join(", ") },
-    ];
+    ].filter(Boolean);
 
     return (
         <div style={{ maxWidth: 1200, margin: "0 auto", padding: "40px 20px" }}>

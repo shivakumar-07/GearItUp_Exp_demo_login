@@ -25,7 +25,7 @@ export function POSBillingPage({ products, activeShopId, onMultiSale, toast }) {
     const [vehicleReg, setVehicleReg] = useState("");
     const [mechanic, setMechanic] = useState("");
     const [notes, setNotes] = useState("");
-    const [paymentModes, setPaymentModes] = useState({ Cash: 0, UPI: 0, Card: 0, Credit: 0 });
+    const [paymentMode, setPaymentMode] = useState("Cash");
     const [showInvoice, setShowInvoice] = useState(false);
     const [saving, setSaving] = useState(false);
     const [invoiceNo, setInvoiceNo] = useState("");
@@ -51,8 +51,9 @@ export function POSBillingPage({ products, activeShopId, onMultiSale, toast }) {
         } else {
             setItems(prev => [...prev, {
                 productId: p.id, name: p.name, sku: p.sku || "", image: p.image || "📦",
-                qty: 1, price: p.sellPrice, discount: 0, discountType: "%",
+                qty: 1, price: p.sellPrice, originalPrice: p.sellPrice, discount: 0, discountType: "%",
                 gstRate: p.gstRate || 18, buyPrice: p.buyPrice, maxStock: p.stock,
+                priceOverrideReason: "",
             }]);
         }
         setSearch("");
@@ -81,9 +82,8 @@ export function POSBillingPage({ products, activeShopId, onMultiSale, toast }) {
     const grandGst = lineCalcs.reduce((s, l) => s + l.gstAmt, 0);
     const grandProfit = lineCalcs.reduce((s, l) => s + l.profit, 0);
 
-    // Payment splitting
-    const totalPaid = Object.values(paymentModes).reduce((a, b) => a + b, 0);
-    const autoCredit = Math.max(0, grandTotal - totalPaid);
+    // Payment
+    const isUdhaar = paymentMode === "Udhaar";
 
     // Validation
     const validate = () => {
@@ -92,7 +92,7 @@ export function POSBillingPage({ products, activeShopId, onMultiSale, toast }) {
             if (item.qty <= 0) { toast?.(`Invalid quantity for ${item.name}`, "warning"); return false; }
             if (billType === "Sale" && item.qty > item.maxStock) { toast?.(`Only ${item.maxStock} units of ${item.name} in stock`, "warning"); return false; }
         }
-        if (totalPaid > grandTotal + 1) { toast?.("Payment exceeds total bill", "warning"); return false; }
+
         return true;
     };
 
@@ -105,26 +105,39 @@ export function POSBillingPage({ products, activeShopId, onMultiSale, toast }) {
         const inv = generateInvoiceNumber(billType === "Sale" ? "INV" : "EST");
         setInvoiceNo(inv);
 
-        const finalPayments = { ...paymentModes };
-        if (autoCredit > 0) finalPayments.Credit = (finalPayments.Credit || 0) + autoCredit;
+        const finalPayments = { [isUdhaar ? "Credit" : paymentMode]: grandTotal };
 
         onMultiSale({
             type: billType,
             invoiceNo: inv,
-            items: items.map((item, idx) => ({
-                productId: item.productId,
-                name: item.name,
-                qty: item.qty,
-                sellPrice: item.price,
-                buyPrice: item.buyPrice,
-                discount: lineCalcs[idx].discAmt,
-                total: lineCalcs[idx].afterDisc,
-                gstAmount: lineCalcs[idx].gstAmt,
-                profit: lineCalcs[idx].profit,
-                gstRate: item.gstRate,
-            })),
+            items: items.map((item, idx) => {
+                const isOverridden = item.price !== item.originalPrice && item.originalPrice > 0;
+                const priceOverride = isOverridden ? {
+                    originalPrice: item.originalPrice,
+                    overriddenPrice: item.price,
+                    difference: item.price - item.originalPrice,
+                    percentChange: +((item.price - item.originalPrice) / item.originalPrice * 100).toFixed(1),
+                    reason: item.priceOverrideReason || "",
+                    overriddenBy: "shopOwner",
+                    overriddenAt: Date.now(),
+                } : null;
+                return {
+                    productId: item.productId,
+                    name: item.name,
+                    qty: item.qty,
+                    sellPrice: item.price,
+                    buyPrice: item.buyPrice,
+                    discount: lineCalcs[idx].discAmt,
+                    total: lineCalcs[idx].afterDisc,
+                    gstAmount: lineCalcs[idx].gstAmt,
+                    profit: lineCalcs[idx].profit,
+                    gstRate: item.gstRate,
+                    ...(priceOverride && { priceOverride }),
+                };
+            }),
             customerName, customerPhone, vehicleReg, mechanic, notes,
             payments: finalPayments,
+            paymentMode,
             subtotal: grandSubtotal,
             discount: grandDiscount,
             total: grandTotal,
@@ -140,7 +153,7 @@ export function POSBillingPage({ products, activeShopId, onMultiSale, toast }) {
     // Reset for new bill
     const newBill = () => {
         setItems([]); setCustomerName(""); setCustomerPhone(""); setVehicleReg(""); setMechanic(""); setNotes("");
-        setPaymentModes({ Cash: 0, UPI: 0, Card: 0, Credit: 0 }); setShowInvoice(false); setSearch("");
+        setPaymentMode("Cash"); setShowInvoice(false); setSearch("");
         if (searchRef.current) searchRef.current.focus();
     };
 
@@ -190,12 +203,9 @@ export function POSBillingPage({ products, activeShopId, onMultiSale, toast }) {
                 </div>
 
                 <div style={{ marginTop: 10, paddingTop: 8, borderTop: `1px dashed ${T.border}` }}>
-                    {Object.entries(paymentModes).filter(([_, amt]) => amt > 0).map(([mode, amt]) => (
-                        <div key={mode} style={{ display: "flex", justifyContent: "space-between", fontSize: 12, color: T.t3, marginBottom: 2 }}>
-                            <span>Paid via {mode}</span><span style={{ fontFamily: FONT.mono }}>{fmt(amt)}</span>
-                        </div>
-                    ))}
-                    {autoCredit > 0 && <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, color: T.crimson, marginBottom: 2, fontWeight: 700 }}><span>Credit (Udhaar)</span><span style={{ fontFamily: FONT.mono }}>{fmt(autoCredit)}</span></div>}
+                    <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, color: T.t3, marginBottom: 2 }}>
+                        <span>{isUdhaar ? "Credit (Udhaar)" : `Paid via ${paymentMode}`}</span><span style={{ fontFamily: FONT.mono }}>{fmt(grandTotal)}</span>
+                    </div>
                 </div>
             </div>
 
@@ -303,7 +313,12 @@ export function POSBillingPage({ products, activeShopId, onMultiSale, toast }) {
                                         </td>
                                         <td style={{ padding: "10px 8px", width: 100 }}>
                                             <input type="number" value={item.price} onChange={e => updateItem(idx, "price", +e.target.value)}
-                                                style={{ width: 90, background: T.bg, border: `1px solid ${T.border}`, borderRadius: 6, padding: "6px 8px", color: T.t1, fontFamily: FONT.mono, fontSize: 13, textAlign: "right" }} />
+                                                style={{ width: 90, background: T.bg, border: `1px solid ${item.price !== item.originalPrice ? T.amber : T.border}`, borderRadius: 6, padding: "6px 8px", color: T.t1, fontFamily: FONT.mono, fontSize: 13, textAlign: "right" }} />
+                                            {item.price !== item.originalPrice && item.originalPrice > 0 && (
+                                                <div style={{ fontSize: 9, color: T.amber, fontWeight: 700, marginTop: 2, textAlign: "right" }}>
+                                                    was {fmt(item.originalPrice)}
+                                                </div>
+                                            )}
                                         </td>
                                         <td style={{ padding: "10px 8px", width: 80 }}>
                                             <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
@@ -374,23 +389,34 @@ export function POSBillingPage({ products, activeShopId, onMultiSale, toast }) {
                         {/* Payment */}
                         <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: 14, padding: "16px 20px" }}>
                             <div style={{ fontSize: 13, fontWeight: 800, color: T.t1, marginBottom: 12, textTransform: "uppercase", letterSpacing: "0.06em" }}>💳 Payment</div>
-                            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 12 }}>
-                                {["Cash", "UPI", "Card"].map(pm => (
-                                    <div key={pm} style={{ background: T.surface, border: `1px solid ${T.border}`, padding: "8px 10px", borderRadius: 8, display: "flex", alignItems: "center", gap: 6 }}>
-                                        <span style={{ fontSize: 13 }}>{pm === "Cash" ? "💵" : pm === "UPI" ? "📱" : "💳"} {pm}</span>
-                                        <input type="number" value={paymentModes[pm] || ""} onChange={e => setPaymentModes(p => ({ ...p, [pm]: +e.target.value || 0 }))} placeholder="0"
-                                            style={{ width: "100%", background: T.bg, border: `1px solid ${T.border}`, color: T.t1, borderRadius: 4, padding: "4px 8px", fontFamily: FONT.mono, fontSize: 14, textAlign: "right" }} />
-                                    </div>
-                                ))}
+                            <div style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: 8, marginBottom: 12 }}>
+                                {[
+                                    { key: "Cash", icon: "💵", color: T.emerald },
+                                    { key: "UPI", icon: "📱", color: T.sky },
+                                    { key: "Card", icon: "💳", color: "#818CF8" },
+                                    { key: "Udhaar", icon: "📋", color: T.crimson },
+                                ].map(pm => {
+                                    const active = paymentMode === pm.key;
+                                    return (
+                                        <button key={pm.key} onClick={() => setPaymentMode(pm.key)} type="button" style={{
+                                            padding: "12px 10px", borderRadius: 10, cursor: "pointer", transition: "all 0.15s",
+                                            background: active ? `${pm.color}22` : T.surface,
+                                            border: `2px solid ${active ? pm.color : T.border}`,
+                                            display: "flex", alignItems: "center", gap: 8, justifyContent: "center",
+                                        }}>
+                                            <span style={{ fontSize: 18 }}>{pm.icon}</span>
+                                            <span style={{ fontSize: 12, fontWeight: 800, color: active ? pm.color : T.t3 }}>{pm.key}</span>
+                                            {active && <span style={{ fontSize: 11, fontWeight: 700, fontFamily: FONT.mono, color: pm.color }}>{fmt(grandTotal)}</span>}
+                                        </button>
+                                    );
+                                })}
                             </div>
-                            {/* Auto-credit */}
-                            <div style={{ background: autoCredit > 0 ? `${T.crimson}22` : T.surface, border: `1px solid ${autoCredit > 0 ? T.crimson : T.border}`, padding: "10px 14px", borderRadius: 8, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                                <div>
-                                    <div style={{ fontSize: 13, fontWeight: 700, color: autoCredit > 0 ? T.crimson : T.t2 }}>📋 Udhaar (Credit)</div>
-                                    <div style={{ fontSize: 10, color: T.t3 }}>Auto-calculated unpaid balance</div>
+                            {isUdhaar && (
+                                <div style={{ background: `${T.crimson}15`, border: `1px solid ${T.crimson}44`, padding: "10px 14px", borderRadius: 8, display: "flex", alignItems: "center", gap: 10 }}>
+                                    <span style={{ fontSize: 16 }}>⚠️</span>
+                                    <div style={{ fontSize: 12, color: T.crimson, fontWeight: 600 }}>Full amount of {fmt(grandTotal)} will be added to credit ledger</div>
                                 </div>
-                                <div style={{ fontSize: 18, fontWeight: 900, fontFamily: FONT.mono, color: autoCredit > 0 ? T.crimson : T.t3 }}>{fmt(autoCredit)}</div>
-                            </div>
+                            )}
                         </div>
                     </div>
 
